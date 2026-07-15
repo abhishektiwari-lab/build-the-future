@@ -48,7 +48,7 @@ export default function TeamPage() {
       }
 
       // Check submissions state
-      const { data: eventState } = await supabase.from('event_state').select('submissions_open').single()
+      const { data: eventState } = await supabase.from('event_state').select('submissions_open').maybeSingle()
       if (eventState) {
         setSubmissionsOpen(eventState.submissions_open)
       }

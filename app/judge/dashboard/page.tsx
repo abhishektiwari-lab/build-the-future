@@ -66,7 +66,7 @@ export default function JudgeDashboard() {
         .subscribe()
 
       // Load initial data
-      const { data: eventState } = await supabase.from('event_state').select('*').single()
+      const { data: eventState } = await supabase.from('event_state').select('*').maybeSingle()
       if (eventState) {
         setJudgingOpen(eventState.judging_open && !eventState.judging_locked)
         if (eventState.current_team_id) {

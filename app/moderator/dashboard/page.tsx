@@ -31,7 +31,8 @@ export default function ModeratorDashboard() {
         supabase.from('participants').select('*'),
         supabase.from('teams').select('*'),
         supabase.from('judges').select('*'),
-        supabase.from('event_state').select('*').single(),
+        // maybeSingle() returns null (not an error) when the row doesn't exist yet
+        supabase.from('event_state').select('*').maybeSingle(),
       ])
 
       // Surface read errors (e.g. RLS blocking SELECT, bad env vars)
@@ -49,14 +50,39 @@ export default function ModeratorDashboard() {
       setParticipants(participantsRes.data || [])
       setTeams(teamsRes.data || [])
       setJudges(judgesRes.data || [])
-      setEventState(eventStateRes.data)
 
-      if (eventStateRes.data?.current_team_id) {
+      // Ensure exactly one event_state row exists; create it on first load
+      let eventStateRow = eventStateRes.data
+      if (!eventStateRow) {
+        const { data: created, error: createErr } = await supabase
+          .from('event_state')
+          .insert([
+            {
+              registration_open: true,
+              submissions_open: true,
+              judging_open: false,
+              judging_locked: false,
+              leaderboard_visible: false,
+              winner_reveal_state: 'hidden',
+            },
+          ])
+          .select()
+          .single()
+        if (createErr) {
+          console.error('Event state create error:', createErr)
+          setError(`Could not initialize event state — ${createErr.message}`)
+        } else {
+          eventStateRow = created
+        }
+      }
+      setEventState(eventStateRow)
+
+      if (eventStateRow?.current_team_id) {
         const { data: team } = await supabase
           .from('teams')
           .select('*')
-          .eq('id', eventStateRes.data.current_team_id)
-          .single()
+          .eq('id', eventStateRow.current_team_id)
+          .maybeSingle()
         setCurrentTeam(team)
       }
 

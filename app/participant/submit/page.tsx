@@ -40,7 +40,7 @@ export default function SubmitPage() {
       setTeamName(storedTeamName || '')
 
       // Check submissions open
-      const { data: eventState } = await supabase.from('event_state').select('submissions_open').single()
+      const { data: eventState } = await supabase.from('event_state').select('submissions_open').maybeSingle()
       if (eventState && !eventState.submissions_open) {
         setSubmissionsOpen(false)
       }

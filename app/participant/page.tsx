@@ -21,7 +21,7 @@ export default function ParticipantPage() {
   useEffect(() => {
     // Check if registration is open
     const checkRegistration = async () => {
-      const { data } = await supabase.from('event_state').select('registration_open').single()
+      const { data } = await supabase.from('event_state').select('registration_open').maybeSingle()
       if (data) {
         setRegistrationOpen(data.registration_open)
       }

@@ -27,7 +27,7 @@ export default function ResultsPage() {
     const loadResults = async () => {
       const [leaderboardRes, eventStateRes] = await Promise.all([
         getTeamLeaderboard(),
-        supabase.from('event_state').select('*').single(),
+        supabase.from('event_state').select('*').maybeSingle(),
       ])
 
       setLeaderboard(leaderboardRes)
