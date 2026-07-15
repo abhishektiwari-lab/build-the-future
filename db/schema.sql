@@ -97,13 +97,25 @@ CREATE INDEX IF NOT EXISTS idx_scores_judge_id ON scores(judge_id);
 CREATE INDEX IF NOT EXISTS idx_scores_team_id ON scores(team_id);
 CREATE INDEX IF NOT EXISTS idx_teams_join_code ON teams(join_code);
 
--- Enable Row Level Security (optional, but recommended)
+-- Enable Row Level Security
 ALTER TABLE participants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE submissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE judges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE event_state ENABLE ROW LEVEL SECURITY;
+
+-- Access policies
+-- This is an internal, trusted-user event app that uses the anon key
+-- for all reads and writes. RLS is enabled above, so we must define
+-- policies that allow the anon role to operate — without these, every
+-- insert/select/update/delete is denied and the app appears "broken".
+CREATE POLICY "Allow all access to participants" ON participants FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to teams" ON teams FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to submissions" ON submissions FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to judges" ON judges FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to scores" ON scores FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to event_state" ON event_state FOR ALL USING (true) WITH CHECK (true);
 
 -- Create view for leaderboard calculations
 CREATE OR REPLACE VIEW team_scores AS
