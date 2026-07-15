@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
@@ -15,6 +15,7 @@ export default function ModeratorDashboard() {
   const [eventState, setEventState] = useState<any>(null)
   const [currentTeam, setCurrentTeam] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   // Form states
   const [showAddTeam, setShowAddTeam] = useState(false)
@@ -23,20 +24,9 @@ export default function ModeratorDashboard() {
   const [newJudgeName, setNewJudgeName] = useState('')
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    const checkAuth = () => {
-      const isLoggedIn = localStorage.getItem('moderatorLoggedIn')
-      if (!isLoggedIn) {
-        router.push('/moderator')
-      }
-    }
-
-    checkAuth()
-    loadData()
-  }, [router])
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
+      setError('')
       const [participantsRes, teamsRes, judgesRes, eventStateRes] = await Promise.all([
         supabase.from('participants').select('*'),
         supabase.from('teams').select('*'),
@@ -61,8 +51,21 @@ export default function ModeratorDashboard() {
       setLoading(false)
     } catch (err) {
       console.error('Load data error:', err)
+      setError('Failed to load data')
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const checkAuth = () => {
+      const isLoggedIn = localStorage.getItem('moderatorLoggedIn')
+      if (!isLoggedIn) {
+        router.push('/moderator')
+      }
+    }
+
+    checkAuth()
+    loadData()
+  }, [router, loadData])
 
   const handleLogout = () => {
     localStorage.removeItem('moderatorLoggedIn')
@@ -71,12 +74,12 @@ export default function ModeratorDashboard() {
 
   const handleSetCurrentTeam = async (teamId: string) => {
     if (!eventState) return
-    const { error } = await supabase
+    const { error: err } = await supabase
       .from('event_state')
       .update({ current_team_id: teamId })
       .eq('id', eventState.id)
 
-    if (!error) {
+    if (!err) {
       const { data: team } = await supabase
         .from('teams')
         .select('*')
@@ -88,23 +91,25 @@ export default function ModeratorDashboard() {
 
   const handleToggleEvent = async (field: string, value: boolean) => {
     if (!eventState) return
-    const { error } = await supabase
+    const { error: err } = await supabase
       .from('event_state')
       .update({ [field]: value })
       .eq('id', eventState.id)
 
-    if (!error) {
+    if (!err) {
       setEventState({ ...eventState, [field]: value })
     }
   }
 
-  const handleAddTeam = async () => {
+  const handleAddTeam = async (e: React.FormEvent) => {
+    e.preventDefault()
     if (!newTeamName.trim()) return
     setSaving(true)
+    setError('')
 
     try {
       const code = generateJoinCode()
-      const { error } = await supabase.from('teams').insert([
+      const { error: err } = await supabase.from('teams').insert([
         {
           name: newTeamName,
           join_code: code,
@@ -112,25 +117,28 @@ export default function ModeratorDashboard() {
         },
       ])
 
-      if (!error) {
-        setNewTeamName('')
-        setShowAddTeam(false)
-        loadData()
-      }
+      if (err) throw err
+
+      setNewTeamName('')
+      setShowAddTeam(false)
+      await loadData()
     } catch (err) {
       console.error('Error adding team:', err)
+      setError('Failed to add team')
     } finally {
       setSaving(false)
     }
   }
 
-  const handleAddJudge = async () => {
+  const handleAddJudge = async (e: React.FormEvent) => {
+    e.preventDefault()
     if (!newJudgeName.trim()) return
     setSaving(true)
+    setError('')
 
     try {
       const code = generateAccessCode()
-      const { error } = await supabase.from('judges').insert([
+      const { error: err } = await supabase.from('judges').insert([
         {
           name: newJudgeName,
           access_code: code,
@@ -138,13 +146,14 @@ export default function ModeratorDashboard() {
         },
       ])
 
-      if (!error) {
-        setNewJudgeName('')
-        setShowAddJudge(false)
-        loadData()
-      }
+      if (err) throw err
+
+      setNewJudgeName('')
+      setShowAddJudge(false)
+      await loadData()
     } catch (err) {
       console.error('Error adding judge:', err)
+      setError('Failed to add judge')
     } finally {
       setSaving(false)
     }
@@ -154,11 +163,14 @@ export default function ModeratorDashboard() {
     if (!confirm('Delete this team? This cannot be undone.')) return
 
     setSaving(true)
+    setError('')
     try {
-      const { error } = await supabase.from('teams').delete().eq('id', teamId)
-      if (!error) {
-        loadData()
-      }
+      const { error: err } = await supabase.from('teams').delete().eq('id', teamId)
+      if (err) throw err
+      await loadData()
+    } catch (err) {
+      console.error('Error deleting team:', err)
+      setError('Failed to delete team')
     } finally {
       setSaving(false)
     }
@@ -168,11 +180,14 @@ export default function ModeratorDashboard() {
     if (!confirm('Delete this judge?')) return
 
     setSaving(true)
+    setError('')
     try {
-      const { error } = await supabase.from('judges').delete().eq('id', judgeId)
-      if (!error) {
-        loadData()
-      }
+      const { error: err } = await supabase.from('judges').delete().eq('id', judgeId)
+      if (err) throw err
+      await loadData()
+    } catch (err) {
+      console.error('Error deleting judge:', err)
+      setError('Failed to delete judge')
     } finally {
       setSaving(false)
     }
@@ -180,12 +195,12 @@ export default function ModeratorDashboard() {
 
   const handleToggleJudge = async (judgeId: string, currentStatus: boolean) => {
     try {
-      const { error } = await supabase.from('judges').update({ active: !currentStatus }).eq('id', judgeId)
-      if (!error) {
-        loadData()
-      }
+      const { error: err } = await supabase.from('judges').update({ active: !currentStatus }).eq('id', judgeId)
+      if (err) throw err
+      await loadData()
     } catch (err) {
       console.error('Error toggling judge:', err)
+      setError('Failed to update judge')
     }
   }
 
@@ -233,6 +248,12 @@ export default function ModeratorDashboard() {
       </div>
 
       <div className="max-w-7xl mx-auto p-4">
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            {error}
+          </div>
+        )}
+
         {/* OVERVIEW TAB */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
@@ -363,7 +384,7 @@ export default function ModeratorDashboard() {
         {/* TEAMS TAB */}
         {activeTab === 'teams' && (
           <div className="space-y-4">
-            {/* Add Team Button */}
+            {/* Add Team Form */}
             {!showAddTeam ? (
               <button
                 onClick={() => setShowAddTeam(true)}
@@ -372,7 +393,7 @@ export default function ModeratorDashboard() {
                 + Add New Team
               </button>
             ) : (
-              <div className="bg-white rounded-lg p-6 shadow-sm space-y-4">
+              <form onSubmit={handleAddTeam} className="bg-white rounded-lg p-6 shadow-sm space-y-4">
                 <h3 className="font-bold text-gray-900">Create New Team</h3>
                 <input
                   type="text"
@@ -380,23 +401,25 @@ export default function ModeratorDashboard() {
                   onChange={(e) => setNewTeamName(e.target.value)}
                   placeholder="Team name (e.g., Team Alpha)"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
                 />
                 <div className="flex gap-2">
                   <button
-                    onClick={handleAddTeam}
+                    type="submit"
                     disabled={saving || !newTeamName.trim()}
                     className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold py-2 rounded-lg transition-colors"
                   >
-                    {saving ? 'Creating...' : 'Create'}
+                    {saving ? 'Creating...' : 'Create Team'}
                   </button>
                   <button
+                    type="button"
                     onClick={() => setShowAddTeam(false)}
                     className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg transition-colors"
                   >
                     Cancel
                   </button>
                 </div>
-              </div>
+              </form>
             )}
 
             {/* Teams List */}
@@ -407,8 +430,10 @@ export default function ModeratorDashboard() {
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
                       <h3 className="text-lg font-bold text-gray-900">{team.name}</h3>
-                      <p className="text-sm text-gray-600">Code: <code className="bg-gray-100 px-2 py-1 rounded">{team.join_code}</code></p>
-                      <p className="text-xs text-gray-500 mt-1">Order: {team.presentation_order || 'Not set'}</p>
+                      <p className="text-sm text-gray-600">
+                        Code: <code className="bg-gray-100 px-2 py-1 rounded font-mono">{team.join_code}</code>
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">Presentation Order: {team.presentation_order || 'Not set'}</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
@@ -416,7 +441,8 @@ export default function ModeratorDashboard() {
                       </span>
                       <button
                         onClick={() => handleDeleteTeam(team.id)}
-                        className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-700 rounded text-sm font-semibold transition-colors"
+                        disabled={saving}
+                        className="px-3 py-1 bg-red-100 hover:bg-red-200 disabled:bg-gray-200 text-red-700 disabled:text-gray-500 rounded text-sm font-semibold transition-colors"
                       >
                         Delete
                       </button>
@@ -427,7 +453,9 @@ export default function ModeratorDashboard() {
                       <div>
                         <p className="font-medium mb-2">Members:</p>
                         {teamMembers.map((m) => (
-                          <p key={m.id} className="text-gray-600">• {m.name} ({m.email})</p>
+                          <p key={m.id} className="text-gray-600">
+                            • {m.name} ({m.email})
+                          </p>
                         ))}
                       </div>
                     ) : (
@@ -447,7 +475,7 @@ export default function ModeratorDashboard() {
               <div className="bg-white rounded-lg p-6 shadow-sm">
                 <h2 className="text-lg font-bold text-gray-900 mb-4">Judging for: {currentTeam.name}</h2>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {judges.map((judge) => (
+                  {judges.filter((j) => j.active).map((judge) => (
                     <div key={judge.id} className="bg-slate-50 p-4 rounded-lg">
                       <p className="font-medium text-gray-900">{judge.name}</p>
                       <p className="text-sm text-gray-600 mt-2">Status: Pending</p>
@@ -474,7 +502,7 @@ export default function ModeratorDashboard() {
         {/* SETTINGS TAB */}
         {activeTab === 'settings' && (
           <div className="space-y-4">
-            {/* Add Judge */}
+            {/* Add Judge Form */}
             {!showAddJudge ? (
               <button
                 onClick={() => setShowAddJudge(true)}
@@ -483,7 +511,7 @@ export default function ModeratorDashboard() {
                 + Add New Judge
               </button>
             ) : (
-              <div className="bg-white rounded-lg p-6 shadow-sm space-y-4">
+              <form onSubmit={handleAddJudge} className="bg-white rounded-lg p-6 shadow-sm space-y-4">
                 <h3 className="font-bold text-gray-900">Add Judge</h3>
                 <input
                   type="text"
@@ -491,23 +519,25 @@ export default function ModeratorDashboard() {
                   onChange={(e) => setNewJudgeName(e.target.value)}
                   placeholder="Judge name (e.g., Ashish Garg)"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  autoFocus
                 />
                 <div className="flex gap-2">
                   <button
-                    onClick={handleAddJudge}
+                    type="submit"
                     disabled={saving || !newJudgeName.trim()}
                     className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold py-2 rounded-lg transition-colors"
                   >
                     {saving ? 'Adding...' : 'Add Judge'}
                   </button>
                   <button
+                    type="button"
                     onClick={() => setShowAddJudge(false)}
                     className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg transition-colors"
                   >
                     Cancel
                   </button>
                 </div>
-              </div>
+              </form>
             )}
 
             {/* Judges List */}
@@ -533,7 +563,8 @@ export default function ModeratorDashboard() {
                         </label>
                         <button
                           onClick={() => handleDeleteJudge(judge.id)}
-                          className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-700 rounded text-sm font-semibold transition-colors"
+                          disabled={saving}
+                          className="px-3 py-1 bg-red-100 hover:bg-red-200 disabled:bg-gray-200 text-red-700 disabled:text-gray-500 rounded text-sm font-semibold transition-colors"
                         >
                           Delete
                         </button>
