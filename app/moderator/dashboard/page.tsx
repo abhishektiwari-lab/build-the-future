@@ -34,6 +34,18 @@ export default function ModeratorDashboard() {
         supabase.from('event_state').select('*').single(),
       ])
 
+      // Surface read errors (e.g. RLS blocking SELECT, bad env vars)
+      const readErr =
+        participantsRes.error || teamsRes.error || judgesRes.error || eventStateRes.error
+      if (readErr) {
+        console.error('Read error:', readErr)
+        setError(
+          `Read failed — ${readErr.message}` +
+            ((readErr as any).code ? ` [code: ${(readErr as any).code}]` : '') +
+            ((readErr as any).hint ? ` | hint: ${(readErr as any).hint}` : '')
+        )
+      }
+
       setParticipants(participantsRes.data || [])
       setTeams(teamsRes.data || [])
       setJudges(judgesRes.data || [])
@@ -122,9 +134,13 @@ export default function ModeratorDashboard() {
       setNewTeamName('')
       setShowAddTeam(false)
       await loadData()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error adding team:', err)
-      setError('Failed to add team')
+      setError(
+        `Add team failed — ${err?.message || 'unknown error'}` +
+          (err?.code ? ` [code: ${err.code}]` : '') +
+          (err?.hint ? ` | hint: ${err.hint}` : '')
+      )
     } finally {
       setSaving(false)
     }
@@ -151,9 +167,13 @@ export default function ModeratorDashboard() {
       setNewJudgeName('')
       setShowAddJudge(false)
       await loadData()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error adding judge:', err)
-      setError('Failed to add judge')
+      setError(
+        `Add judge failed — ${err?.message || 'unknown error'}` +
+          (err?.code ? ` [code: ${err.code}]` : '') +
+          (err?.hint ? ` | hint: ${err.hint}` : '')
+      )
     } finally {
       setSaving(false)
     }
