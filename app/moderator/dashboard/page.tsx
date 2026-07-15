@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { generateJoinCode, generateAccessCode } from '@/lib/auth'
 
 export default function ModeratorDashboard() {
   const router = useRouter()
@@ -14,6 +15,13 @@ export default function ModeratorDashboard() {
   const [eventState, setEventState] = useState<any>(null)
   const [currentTeam, setCurrentTeam] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+
+  // Form states
+  const [showAddTeam, setShowAddTeam] = useState(false)
+  const [showAddJudge, setShowAddJudge] = useState(false)
+  const [newTeamName, setNewTeamName] = useState('')
+  const [newJudgeName, setNewJudgeName] = useState('')
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     const checkAuth = () => {
@@ -87,6 +95,97 @@ export default function ModeratorDashboard() {
 
     if (!error) {
       setEventState({ ...eventState, [field]: value })
+    }
+  }
+
+  const handleAddTeam = async () => {
+    if (!newTeamName.trim()) return
+    setSaving(true)
+
+    try {
+      const code = generateJoinCode()
+      const { error } = await supabase.from('teams').insert([
+        {
+          name: newTeamName,
+          join_code: code,
+          presentation_order: teams.length + 1,
+        },
+      ])
+
+      if (!error) {
+        setNewTeamName('')
+        setShowAddTeam(false)
+        loadData()
+      }
+    } catch (err) {
+      console.error('Error adding team:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAddJudge = async () => {
+    if (!newJudgeName.trim()) return
+    setSaving(true)
+
+    try {
+      const code = generateAccessCode()
+      const { error } = await supabase.from('judges').insert([
+        {
+          name: newJudgeName,
+          access_code: code,
+          active: true,
+        },
+      ])
+
+      if (!error) {
+        setNewJudgeName('')
+        setShowAddJudge(false)
+        loadData()
+      }
+    } catch (err) {
+      console.error('Error adding judge:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeleteTeam = async (teamId: string) => {
+    if (!confirm('Delete this team? This cannot be undone.')) return
+
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('teams').delete().eq('id', teamId)
+      if (!error) {
+        loadData()
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeleteJudge = async (judgeId: string) => {
+    if (!confirm('Delete this judge?')) return
+
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('judges').delete().eq('id', judgeId)
+      if (!error) {
+        loadData()
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleToggleJudge = async (judgeId: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase.from('judges').update({ active: !currentStatus }).eq('id', judgeId)
+      if (!error) {
+        loadData()
+      }
+    } catch (err) {
+      console.error('Error toggling judge:', err)
     }
   }
 
@@ -264,23 +363,76 @@ export default function ModeratorDashboard() {
         {/* TEAMS TAB */}
         {activeTab === 'teams' && (
           <div className="space-y-4">
+            {/* Add Team Button */}
+            {!showAddTeam ? (
+              <button
+                onClick={() => setShowAddTeam(true)}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition-colors"
+              >
+                + Add New Team
+              </button>
+            ) : (
+              <div className="bg-white rounded-lg p-6 shadow-sm space-y-4">
+                <h3 className="font-bold text-gray-900">Create New Team</h3>
+                <input
+                  type="text"
+                  value={newTeamName}
+                  onChange={(e) => setNewTeamName(e.target.value)}
+                  placeholder="Team name (e.g., Team Alpha)"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAddTeam}
+                    disabled={saving || !newTeamName.trim()}
+                    className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold py-2 rounded-lg transition-colors"
+                  >
+                    {saving ? 'Creating...' : 'Create'}
+                  </button>
+                  <button
+                    onClick={() => setShowAddTeam(false)}
+                    className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Teams List */}
             {teams.map((team) => {
               const teamMembers = participants.filter((p) => p.team_id === team.id)
               return (
                 <div key={team.id} className="bg-white rounded-lg p-6 shadow-sm">
                   <div className="flex items-start justify-between mb-4">
-                    <div>
+                    <div className="flex-1">
                       <h3 className="text-lg font-bold text-gray-900">{team.name}</h3>
-                      <p className="text-sm text-gray-600">Code: {team.join_code}</p>
+                      <p className="text-sm text-gray-600">Code: <code className="bg-gray-100 px-2 py-1 rounded">{team.join_code}</code></p>
+                      <p className="text-xs text-gray-500 mt-1">Order: {team.presentation_order || 'Not set'}</p>
                     </div>
-                    <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
-                      {teamMembers.length} members
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                        {teamMembers.length} members
+                      </span>
+                      <button
+                        onClick={() => handleDeleteTeam(team.id)}
+                        className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-700 rounded text-sm font-semibold transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                   <div className="text-sm text-gray-700">
-                    {teamMembers.map((m) => (
-                      <p key={m.id}>{m.name}</p>
-                    ))}
+                    {teamMembers.length > 0 ? (
+                      <div>
+                        <p className="font-medium mb-2">Members:</p>
+                        {teamMembers.map((m) => (
+                          <p key={m.id} className="text-gray-600">• {m.name} ({m.email})</p>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-gray-500 italic">No members yet</p>
+                    )}
                   </div>
                 </div>
               )
@@ -321,29 +473,76 @@ export default function ModeratorDashboard() {
 
         {/* SETTINGS TAB */}
         {activeTab === 'settings' && (
-          <div className="bg-white rounded-lg p-6 shadow-sm">
-            <h2 className="text-lg font-bold text-gray-900 mb-4">Event Settings</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Judges</label>
-                <div className="space-y-2">
-                  {judges.map((judge) => (
-                    <div key={judge.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                      <div>
-                        <p className="font-medium text-gray-900">{judge.name}</p>
-                        <p className="text-xs text-gray-500">{judge.access_code}</p>
-                      </div>
-                      <label className="flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={judge.active}
-                          className="w-4 h-4"
-                          disabled
-                        />
-                      </label>
-                    </div>
-                  ))}
+          <div className="space-y-4">
+            {/* Add Judge */}
+            {!showAddJudge ? (
+              <button
+                onClick={() => setShowAddJudge(true)}
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-lg transition-colors"
+              >
+                + Add New Judge
+              </button>
+            ) : (
+              <div className="bg-white rounded-lg p-6 shadow-sm space-y-4">
+                <h3 className="font-bold text-gray-900">Add Judge</h3>
+                <input
+                  type="text"
+                  value={newJudgeName}
+                  onChange={(e) => setNewJudgeName(e.target.value)}
+                  placeholder="Judge name (e.g., Ashish Garg)"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAddJudge}
+                    disabled={saving || !newJudgeName.trim()}
+                    className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold py-2 rounded-lg transition-colors"
+                  >
+                    {saving ? 'Adding...' : 'Add Judge'}
+                  </button>
+                  <button
+                    onClick={() => setShowAddJudge(false)}
+                    className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
                 </div>
+              </div>
+            )}
+
+            {/* Judges List */}
+            <div className="bg-white rounded-lg p-6 shadow-sm">
+              <h2 className="text-lg font-bold text-gray-900 mb-4">Manage Judges ({judges.length})</h2>
+              <div className="space-y-2">
+                {judges.length > 0 ? (
+                  judges.map((judge) => (
+                    <div key={judge.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors">
+                      <div className="flex-1">
+                        <p className="font-semibold text-gray-900">{judge.name}</p>
+                        <p className="text-sm text-gray-600 font-mono">Code: {judge.access_code}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={judge.active}
+                            onChange={() => handleToggleJudge(judge.id, judge.active)}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm text-gray-700">{judge.active ? 'Active' : 'Inactive'}</span>
+                        </label>
+                        <button
+                          onClick={() => handleDeleteJudge(judge.id)}
+                          className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-700 rounded text-sm font-semibold transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-gray-500 italic text-center py-4">No judges added yet</p>
+                )}
               </div>
             </div>
           </div>
