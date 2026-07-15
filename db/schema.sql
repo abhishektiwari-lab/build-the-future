@@ -117,6 +117,18 @@ CREATE POLICY "Allow all access to judges" ON judges FOR ALL USING (true) WITH C
 CREATE POLICY "Allow all access to scores" ON scores FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to event_state" ON event_state FOR ALL USING (true) WITH CHECK (true);
 
+-- Table-level privileges for the anon/authenticated roles the app uses.
+-- RLS policies above decide WHICH ROWS; these GRANTs decide whether the
+-- role can touch the table AT ALL. Both are required.
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;
+
 -- Create view for leaderboard calculations
 CREATE OR REPLACE VIEW team_scores AS
 SELECT
