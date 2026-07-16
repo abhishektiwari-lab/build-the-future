@@ -227,6 +227,29 @@ export default function ModeratorDashboard() {
     }
   }
 
+  const handleUpdatePresentationOrder = async (teamId: string, order: string) => {
+    setSaving(true)
+    setError('')
+    try {
+      const parsed = order === '' ? null : parseInt(order, 10)
+      if (parsed !== null && (isNaN(parsed) || parsed < 1)) {
+        setError('Presentation order must be a positive number.')
+        return
+      }
+      const { error: err } = await supabase
+        .from('teams')
+        .update({ presentation_order: parsed })
+        .eq('id', teamId)
+      if (err) throw err
+      await loadData()
+    } catch (err: any) {
+      console.error('Error updating presentation order:', err)
+      setError(`Update order failed — ${err?.message || 'unknown error'}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleDeleteTeam = async (teamId: string) => {
     if (!confirm('Delete this team? This cannot be undone.')) return
 
@@ -731,7 +754,22 @@ export default function ModeratorDashboard() {
                       <p className="text-sm text-gray-600">
                         Code: <code className="bg-gray-100 px-2 py-1 rounded font-mono">{team.join_code}</code>
                       </p>
-                      <p className="text-xs text-gray-500 mt-1">Presentation Order: {team.presentation_order || 'Not set'}</p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <label className="text-xs text-gray-500">Presentation Order:</label>
+                        <input
+                          type="number"
+                          min={1}
+                          defaultValue={team.presentation_order ?? ''}
+                          onBlur={(e) => {
+                            const val = e.target.value
+                            const current = team.presentation_order == null ? '' : String(team.presentation_order)
+                            if (val !== current) handleUpdatePresentationOrder(team.id, val)
+                          }}
+                          disabled={saving}
+                          placeholder="—"
+                          className="w-16 px-2 py-1 border border-gray-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
