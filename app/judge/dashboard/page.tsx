@@ -13,11 +13,15 @@ interface Team {
 
 interface Submission {
   prototype_name: string | null
-  ai_native_solution: string | null
-  problem: string | null
-  persona: string | null
-  expected_outcomes: string | null
+  current_product_or_process: string | null
 }
+
+interface Member {
+  id: string
+  name: string
+}
+
+type Criterion = 'customerOutcome' | 'aiNativeThinking' | 'innovationAndVision'
 
 export default function JudgeDashboard() {
   const router = useRouter()
@@ -25,12 +29,18 @@ export default function JudgeDashboard() {
   const [judgeId, setJudgeId] = useState<string | null>(null)
   const [currentTeam, setCurrentTeam] = useState<Team | null>(null)
   const [submission, setSubmission] = useState<Submission | null>(null)
+  const [members, setMembers] = useState<Member[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [scores, setScores] = useState({
-    customerOutcome: 0,
-    aiNativeThinking: 0,
-    innovationAndVision: 0,
+    customerOutcome: 5,
+    aiNativeThinking: 5,
+    innovationAndVision: 5,
+  })
+  const [touched, setTouched] = useState({
+    customerOutcome: false,
+    aiNativeThinking: false,
+    innovationAndVision: false,
   })
   const [comment, setComment] = useState('')
   const [judgingOpen, setJudgingOpen] = useState(false)
@@ -40,52 +50,53 @@ export default function JudgeDashboard() {
   const [totalTeams, setTotalTeams] = useState(0)
   const [submitted, setSubmitted] = useState(false)
 
-  // Track which team we've loaded so we can reset the form when it changes
   const loadedTeamRef = useRef<string | null>(null)
 
-  const loadTeamData = useCallback(
-    async (teamId: string, jId: string) => {
-      // Only reload team/submission when the presenting team actually changes
-      if (loadedTeamRef.current !== teamId) {
-        loadedTeamRef.current = teamId
+  const loadTeamData = useCallback(async (teamId: string, jId: string) => {
+    if (loadedTeamRef.current !== teamId) {
+      loadedTeamRef.current = teamId
 
-        const { data: teamData } = await supabase
-          .from('teams')
-          .select('*')
-          .eq('id', teamId)
-          .maybeSingle()
-        setCurrentTeam(teamData || null)
+      const { data: teamData } = await supabase
+        .from('teams')
+        .select('*')
+        .eq('id', teamId)
+        .maybeSingle()
+      setCurrentTeam(teamData || null)
 
-        const { data: submissionData } = await supabase
-          .from('submissions')
-          .select('*')
-          .eq('team_id', teamId)
-          .maybeSingle()
-        setSubmission(submissionData || null)
+      const { data: submissionData } = await supabase
+        .from('submissions')
+        .select('prototype_name, current_product_or_process')
+        .eq('team_id', teamId)
+        .maybeSingle()
+      setSubmission(submissionData || null)
 
-        // Preload an existing score (if this judge already scored this team)
-        const existing = await getJudgeScore(jId, teamId)
-        if (existing) {
-          setScores({
-            customerOutcome: existing.customerOutcome,
-            aiNativeThinking: existing.aiNativeThinking,
-            innovationAndVision: existing.innovationAndVision,
-          })
-          setComment(existing.comment || '')
-          setSubmitted(true)
-        } else {
-          setScores({ customerOutcome: 0, aiNativeThinking: 0, innovationAndVision: 0 })
-          setComment('')
-          setSubmitted(false)
-        }
+      const { data: memberData } = await supabase
+        .from('participants')
+        .select('id, name')
+        .eq('team_id', teamId)
+      setMembers(memberData || [])
+
+      const existing = await getJudgeScore(jId, teamId)
+      if (existing) {
+        setScores({
+          customerOutcome: existing.customerOutcome,
+          aiNativeThinking: existing.aiNativeThinking,
+          innovationAndVision: existing.innovationAndVision,
+        })
+        setTouched({ customerOutcome: true, aiNativeThinking: true, innovationAndVision: true })
+        setComment(existing.comment || '')
+        setSubmitted(true)
+      } else {
+        setScores({ customerOutcome: 5, aiNativeThinking: 5, innovationAndVision: 5 })
+        setTouched({ customerOutcome: false, aiNativeThinking: false, innovationAndVision: false })
+        setComment('')
+        setSubmitted(false)
       }
-    },
-    []
-  )
+    }
+  }, [])
 
   const refresh = useCallback(
     async (jId: string) => {
-      // Event state -> current team + judging flags
       const { data: eventState } = await supabase.from('event_state').select('*').maybeSingle()
       if (eventState) {
         setJudgingOpen(!!eventState.judging_open)
@@ -98,7 +109,6 @@ export default function JudgeDashboard() {
         }
       }
 
-      // Progress: how many teams this judge has scored
       const { data: teamsData } = await supabase.from('teams').select('id')
       if (teamsData) {
         setTotalTeams(teamsData.length)
@@ -124,11 +134,7 @@ export default function JudgeDashboard() {
     setJudgeId(storedJudgeId)
     setJudgeName(storedJudgeName || '')
 
-    // Initial load
     refresh(storedJudgeId).finally(() => setLoading(false))
-
-    // Poll every 3s so judges reliably see the current team and scoring
-    // status without depending on realtime being enabled server-side.
     const interval = setInterval(() => refresh(storedJudgeId), 3000)
     return () => clearInterval(interval)
   }, [router, refresh])
@@ -164,25 +170,36 @@ export default function JudgeDashboard() {
     }
   }
 
-  const scoreButtons = (
-    field: 'customerOutcome' | 'aiNativeThinking' | 'innovationAndVision',
-    color: string
-  ) => (
-    <div className="flex gap-2 flex-wrap">
-      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
-        <button
-          key={num}
-          type="button"
-          onClick={() => setScores({ ...scores, [field]: num })}
-          className={`w-12 h-12 rounded-lg font-bold text-lg transition-all ${
-            scores[field] === num
-              ? `${color} text-white scale-110 shadow-md`
-              : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
-          }`}
-        >
-          {num}
-        </button>
-      ))}
+  const setScore = (field: Criterion, value: number) => {
+    setScores((prev) => ({ ...prev, [field]: value }))
+    setTouched((prev) => ({ ...prev, [field]: true }))
+  }
+
+  const slider = (field: Criterion, title: string, description: string, accent: string) => (
+    <div className="border border-gray-200 rounded-xl p-4">
+      <div className="flex items-baseline justify-between mb-1">
+        <label className="text-base font-semibold text-gray-900">{title}</label>
+        <span className={`text-3xl font-bold ${touched[field] ? accent : 'text-gray-300'}`}>
+          {touched[field] ? scores[field] : '–'}
+        </span>
+      </div>
+      <p className="text-xs text-gray-500 mb-3">{description}</p>
+      <input
+        type="range"
+        min={1}
+        max={10}
+        step={1}
+        value={scores[field]}
+        onChange={(e) => setScore(field, parseInt(e.target.value, 10))}
+        className="w-full h-3 accent-current cursor-pointer"
+        style={{ accentColor: 'currentColor' }}
+      />
+      <div className="flex justify-between text-xs text-gray-400 mt-1 px-1">
+        <span>1</span>
+        <span>5</span>
+        <span>10</span>
+      </div>
+      {!touched[field] && <p className="text-xs text-amber-600 mt-2">Slide to set a score</p>}
     </div>
   )
 
@@ -194,16 +211,15 @@ export default function JudgeDashboard() {
     )
   }
 
-  const allScored =
-    scores.customerOutcome > 0 && scores.aiNativeThinking > 0 && scores.innovationAndVision > 0
+  const allScored = touched.customerOutcome && touched.aiNativeThinking && touched.innovationAndVision
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4">
       <div className="max-w-2xl mx-auto pt-6 pb-16">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Judge Dashboard</h1>
-            <p className="text-gray-600">{judgeName}</p>
+            <h1 className="text-xl font-bold text-gray-900">Judge</h1>
+            <p className="text-sm text-gray-600">{judgeName}</p>
           </div>
           <button
             onClick={() => {
@@ -218,8 +234,7 @@ export default function JudgeDashboard() {
         </div>
 
         {/* Progress */}
-        <div className="bg-white rounded-lg p-4 mb-6 shadow-sm">
-          <p className="text-sm font-medium text-gray-600 mb-2">Progress</p>
+        <div className="bg-white rounded-lg p-3 mb-4 shadow-sm">
           <div className="flex items-center gap-2">
             <div className="flex-1 bg-gray-200 rounded-full h-2">
               <div
@@ -227,85 +242,68 @@ export default function JudgeDashboard() {
                 style={{ width: `${totalTeams ? (completedTeams.length / totalTeams) * 100 : 0}%` }}
               />
             </div>
-            <span className="text-lg font-bold text-blue-600">
-              {completedTeams.length} of {totalTeams}
+            <span className="text-sm font-bold text-blue-600 whitespace-nowrap">
+              {completedTeams.length} of {totalTeams} scored
             </span>
           </div>
         </div>
 
-        {/* Current Team */}
         {currentTeam ? (
-          <div className="bg-white rounded-lg p-6 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-900 mb-1">{currentTeam.name}</h2>
-            <p className="text-lg text-purple-600 font-semibold mb-4">
-              {submission?.prototype_name || currentTeam.prototype_name || 'Prototype'}
-            </p>
+          <div className="bg-white rounded-lg p-5 shadow-sm">
+            {/* Compact team header */}
+            <h2 className="text-2xl font-bold text-gray-900 leading-tight">{currentTeam.name}</h2>
+            {members.length > 0 && (
+              <p className="text-sm text-gray-500 mt-1">{members.map((m) => m.name).join(', ')}</p>
+            )}
 
-            {/* Solution Summary */}
-            <div className="bg-slate-50 rounded-lg p-4 mb-6">
-              <p className="text-sm text-gray-600 mb-1">AI-Native Solution</p>
-              <p className="text-gray-900">
-                {submission?.ai_native_solution || (
-                  <span className="italic text-gray-500">
-                    No written submission yet — score based on the live presentation.
-                  </span>
-                )}
-              </p>
-              {submission?.problem && (
-                <div className="mt-3">
-                  <p className="text-sm text-gray-600 mb-1">Problem</p>
-                  <p className="text-gray-900">{submission.problem}</p>
-                </div>
-              )}
-              {submission?.expected_outcomes && (
-                <div className="mt-3">
-                  <p className="text-sm text-gray-600 mb-1">Expected Outcome</p>
-                  <p className="text-gray-900">{submission.expected_outcomes}</p>
-                </div>
-              )}
+            <div className="mt-3 space-y-2">
+              <div>
+                <span className="text-xs uppercase tracking-wide text-gray-400">Prototype</span>
+                <p className="text-lg font-semibold text-purple-600 leading-tight">
+                  {submission?.prototype_name || currentTeam.prototype_name || '—'}
+                </p>
+              </div>
+              <div>
+                <span className="text-xs uppercase tracking-wide text-gray-400">Reimagining</span>
+                <p className="text-base text-gray-900 leading-tight">
+                  {submission?.current_product_or_process || '—'}
+                </p>
+              </div>
             </div>
 
-            {/* Scoring form: available whenever judging is open and not locked */}
+            <div className="border-t border-gray-100 my-4" />
+
             {judgingOpen && !judgingLocked ? (
-              <form onSubmit={handleScoreSubmit} className="space-y-6">
+              <form onSubmit={handleScoreSubmit} className="space-y-4">
                 {submitted && (
-                  <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded text-sm">
-                    You already submitted a score for this team. You can adjust it and resubmit until
-                    judging is locked.
+                  <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-2 rounded text-sm">
+                    You already scored this team. Adjust and resubmit until judging is locked.
                   </div>
                 )}
 
-                <div>
-                  <label className="block text-base font-semibold text-gray-900 mb-1">
-                    Customer Outcome
-                  </label>
-                  <p className="text-xs text-gray-600 mb-3">
-                    Does the prototype solve a meaningful problem and create a significantly better
-                    outcome?
-                  </p>
-                  {scoreButtons('customerOutcome', 'bg-blue-600')}
+                <div className="text-blue-600">
+                  {slider(
+                    'customerOutcome',
+                    'Customer Outcome',
+                    'Solves a meaningful problem with a significantly better outcome?',
+                    'text-blue-600'
+                  )}
                 </div>
-
-                <div>
-                  <label className="block text-base font-semibold text-gray-900 mb-1">
-                    AI-Native Thinking
-                  </label>
-                  <p className="text-xs text-gray-600 mb-3">
-                    Does the solution fundamentally reimagine the experience using AI, rather than
-                    simply adding an AI feature?
-                  </p>
-                  {scoreButtons('aiNativeThinking', 'bg-purple-600')}
+                <div className="text-purple-600">
+                  {slider(
+                    'aiNativeThinking',
+                    'AI-Native Thinking',
+                    'Fundamentally reimagines the experience with AI, not just an add-on?',
+                    'text-purple-600'
+                  )}
                 </div>
-
-                <div>
-                  <label className="block text-base font-semibold text-gray-900 mb-1">
-                    Innovation and Vision
-                  </label>
-                  <p className="text-xs text-gray-600 mb-3">
-                    Is the idea creative, bold, and forward-looking? Does it offer a compelling vision
-                    for the future?
-                  </p>
-                  {scoreButtons('innovationAndVision', 'bg-green-600')}
+                <div className="text-green-600">
+                  {slider(
+                    'innovationAndVision',
+                    'Innovation & Vision',
+                    'Creative, bold, forward-looking vision for the future?',
+                    'text-green-600'
+                  )}
                 </div>
 
                 <div>
@@ -315,12 +313,11 @@ export default function JudgeDashboard() {
                   <textarea
                     value={comment}
                     onChange={(e) => setComment(e.target.value)}
-                    placeholder="Share feedback or observations..."
-                    rows={3}
+                    placeholder="Optional note..."
+                    rows={2}
                     maxLength={500}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                  <p className="text-xs text-gray-500 mt-1">{comment.length}/500</p>
                 </div>
 
                 {error && (
@@ -330,23 +327,23 @@ export default function JudgeDashboard() {
                 )}
 
                 {allScored && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <p className="text-sm text-gray-600 mb-1">Overall Score</p>
-                    <p className="text-4xl font-bold text-blue-600">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Overall</span>
+                    <span className="text-3xl font-bold text-blue-600">
                       {formatScore(
                         (scores.customerOutcome +
                           scores.aiNativeThinking +
                           scores.innovationAndVision) /
                           3
                       )}
-                    </p>
+                    </span>
                   </div>
                 )}
 
                 <button
                   type="submit"
                   disabled={submitting || !allScored}
-                  className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold py-4 rounded-lg text-lg transition-colors"
+                  className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold py-4 rounded-lg text-lg transition-colors sticky bottom-2"
                 >
                   {submitting ? 'Submitting...' : submitted ? 'Update Score' : 'Submit Scores'}
                 </button>
@@ -365,8 +362,8 @@ export default function JudgeDashboard() {
                 </p>
                 <p className="text-amber-700 text-sm mt-1">
                   {judgingLocked
-                    ? 'All judging has been finalized by the moderator.'
-                    : 'The moderator will open scoring for this team shortly.'}
+                    ? 'All judging has been finalized.'
+                    : 'The moderator will open scoring shortly.'}
                 </p>
               </div>
             )}
