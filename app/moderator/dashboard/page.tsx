@@ -127,6 +127,15 @@ export default function ModeratorDashboard() {
     loadData()
   }, [router, loadData])
 
+  const loadJudgingStatus = useCallback(async () => {
+    if (!currentTeam) {
+      setScoredJudgeIds([])
+      return
+    }
+    const { data } = await supabase.from('scores').select('judge_id').eq('team_id', currentTeam.id)
+    setScoredJudgeIds((data || []).map((s: any) => s.judge_id))
+  }, [currentTeam])
+
   // Poll judge scoring status while the Judging tab is open
   useEffect(() => {
     if (activeTab !== 'judging' || !currentTeam) return
@@ -446,15 +455,6 @@ export default function ModeratorDashboard() {
   }
 
   // ---- Judging controls ----
-
-  const loadJudgingStatus = useCallback(async () => {
-    if (!currentTeam) {
-      setScoredJudgeIds([])
-      return
-    }
-    const { data } = await supabase.from('scores').select('judge_id').eq('team_id', currentTeam.id)
-    setScoredJudgeIds((data || []).map((s: any) => s.judge_id))
-  }, [currentTeam])
 
   const handleAdvanceToNextTeam = async () => {
     if (!eventState) return
