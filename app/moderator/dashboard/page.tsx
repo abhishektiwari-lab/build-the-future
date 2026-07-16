@@ -8,7 +8,7 @@ import { generateJoinCode, generateAccessCode } from '@/lib/auth'
 
 export default function ModeratorDashboard() {
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState<'overview' | 'participants' | 'teams' | 'judging' | 'leaderboard' | 'settings'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'participants' | 'teams' | 'judging' | 'leaderboard' | 'judges'>('overview')
   const [participants, setParticipants] = useState<any[]>([])
   const [teams, setTeams] = useState<any[]>([])
   const [judges, setJudges] = useState<any[]>([])
@@ -21,8 +21,16 @@ export default function ModeratorDashboard() {
   const [showAddTeam, setShowAddTeam] = useState(false)
   const [showAddJudge, setShowAddJudge] = useState(false)
   const [newTeamName, setNewTeamName] = useState('')
+  const [newTeamOrder, setNewTeamOrder] = useState('')
   const [newJudgeName, setNewJudgeName] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Inline editing
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null)
+  const [editTeamName, setEditTeamName] = useState('')
+  const [editingJudgeId, setEditingJudgeId] = useState<string | null>(null)
+  const [editJudgeCode, setEditJudgeCode] = useState('')
+  const [assignParticipantId, setAssignParticipantId] = useState<Record<string, string>>({})
 
   // Participant management
   const [showAddParticipant, setShowAddParticipant] = useState(false)
@@ -169,17 +177,19 @@ export default function ModeratorDashboard() {
 
     try {
       const code = generateJoinCode()
+      const parsedOrder = newTeamOrder.trim() === '' ? teams.length + 1 : parseInt(newTeamOrder, 10)
       const { error: err } = await supabase.from('teams').insert([
         {
           name: newTeamName,
           join_code: code,
-          presentation_order: teams.length + 1,
+          presentation_order: isNaN(parsedOrder) ? teams.length + 1 : parsedOrder,
         },
       ])
 
       if (err) throw err
 
       setNewTeamName('')
+      setNewTeamOrder('')
       setShowAddTeam(false)
       await loadData()
     } catch (err: any) {
@@ -188,6 +198,51 @@ export default function ModeratorDashboard() {
         `Add team failed — ${err?.message || 'unknown error'}` +
           (err?.code ? ` [code: ${err.code}]` : '') +
           (err?.hint ? ` | hint: ${err.hint}` : '')
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRenameTeam = async (teamId: string) => {
+    if (!editTeamName.trim()) return
+    setSaving(true)
+    setError('')
+    try {
+      const { error: err } = await supabase
+        .from('teams')
+        .update({ name: editTeamName, updated_at: new Date().toISOString() })
+        .eq('id', teamId)
+      if (err) throw err
+      setEditingTeamId(null)
+      setEditTeamName('')
+      await loadData()
+    } catch (err: any) {
+      console.error('Error renaming team:', err)
+      setError(`Rename failed — ${err?.message || 'unknown error'}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleUpdateJudgeCode = async (judgeId: string) => {
+    if (!editJudgeCode.trim()) return
+    setSaving(true)
+    setError('')
+    try {
+      const { error: err } = await supabase
+        .from('judges')
+        .update({ access_code: editJudgeCode.trim().toUpperCase() })
+        .eq('id', judgeId)
+      if (err) throw err
+      setEditingJudgeId(null)
+      setEditJudgeCode('')
+      await loadData()
+    } catch (err: any) {
+      console.error('Error updating judge code:', err)
+      setError(
+        `Update code failed — ${err?.message || 'unknown error'}` +
+          (err?.code === '23505' ? ' (that code is already in use)' : '')
       )
     } finally {
       setSaving(false)
@@ -462,7 +517,7 @@ export default function ModeratorDashboard() {
 
         {/* Tabs */}
         <div className="max-w-7xl mx-auto px-4 flex gap-1 overflow-x-auto">
-          {['overview', 'participants', 'teams', 'judging', 'leaderboard', 'settings'].map((tab) => (
+          {['overview', 'participants', 'teams', 'judging', 'leaderboard', 'judges'].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab as any)}
@@ -716,14 +771,30 @@ export default function ModeratorDashboard() {
             ) : (
               <form onSubmit={handleAddTeam} className="bg-white rounded-lg p-6 shadow-sm space-y-4">
                 <h3 className="font-bold text-gray-900">Create New Team</h3>
-                <input
-                  type="text"
-                  value={newTeamName}
-                  onChange={(e) => setNewTeamName(e.target.value)}
-                  placeholder="Team name (e.g., Team Alpha)"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoFocus
-                />
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Team Name</label>
+                  <input
+                    type="text"
+                    value={newTeamName}
+                    onChange={(e) => setNewTeamName(e.target.value)}
+                    placeholder="Team name (e.g., Team Alpha)"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Presentation Order (optional)
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={newTeamOrder}
+                    onChange={(e) => setNewTeamOrder(e.target.value)}
+                    placeholder={`Defaults to ${teams.length + 1}`}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
                 <div className="flex gap-2">
                   <button
                     type="submit"
@@ -750,7 +821,46 @@ export default function ModeratorDashboard() {
                 <div key={team.id} className="bg-white rounded-lg p-6 shadow-sm">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
-                      <h3 className="text-lg font-bold text-gray-900">{team.name}</h3>
+                      {editingTeamId === team.id ? (
+                        <div className="flex items-center gap-2 mb-2">
+                          <input
+                            type="text"
+                            value={editTeamName}
+                            onChange={(e) => setEditTeamName(e.target.value)}
+                            className="px-3 py-1 border border-gray-300 rounded text-lg font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => handleRenameTeam(team.id)}
+                            disabled={saving || !editTeamName.trim()}
+                            className="px-3 py-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white rounded text-sm font-semibold"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingTeamId(null)
+                              setEditTeamName('')
+                            }}
+                            className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded text-sm font-semibold"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-lg font-bold text-gray-900">{team.name}</h3>
+                          <button
+                            onClick={() => {
+                              setEditingTeamId(team.id)
+                              setEditTeamName(team.name)
+                            }}
+                            className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      )}
                       <p className="text-sm text-gray-600">
                         Code: <code className="bg-gray-100 px-2 py-1 rounded font-mono">{team.join_code}</code>
                       </p>
@@ -808,7 +918,47 @@ export default function ModeratorDashboard() {
                     )}
                   </div>
 
-                  {/* Add Member */}
+                  {/* Assign an existing participant who has no team */}
+                  {participants.filter((p) => !p.team_id).length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-gray-100">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Assign existing participant
+                      </label>
+                      <div className="flex gap-2">
+                        <select
+                          value={assignParticipantId[team.id] || ''}
+                          onChange={(e) =>
+                            setAssignParticipantId({ ...assignParticipantId, [team.id]: e.target.value })
+                          }
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">Select a participant…</option>
+                          {participants
+                            .filter((p) => !p.team_id)
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name} ({p.email})
+                              </option>
+                            ))}
+                        </select>
+                        <button
+                          onClick={() => {
+                            const pid = assignParticipantId[team.id]
+                            if (pid) {
+                              handleMoveParticipant(pid, team.id)
+                              setAssignParticipantId({ ...assignParticipantId, [team.id]: '' })
+                            }
+                          }}
+                          disabled={saving || !assignParticipantId[team.id]}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-semibold"
+                        >
+                          Assign
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Add a brand-new member */}
                   <div className="mt-4 pt-4 border-t border-gray-100">
                     {addMemberTeamId === team.id ? (
                       <form onSubmit={(e) => handleAddMember(e, team.id)} className="space-y-2">
@@ -1017,8 +1167,8 @@ export default function ModeratorDashboard() {
           </div>
         )}
 
-        {/* SETTINGS TAB */}
-        {activeTab === 'settings' && (
+        {/* JUDGES TAB */}
+        {activeTab === 'judges' && (
           <div className="space-y-4">
             {/* Add Judge Form */}
             {!showAddJudge ? (
@@ -1064,12 +1214,51 @@ export default function ModeratorDashboard() {
               <div className="space-y-2">
                 {judges.length > 0 ? (
                   judges.map((judge) => (
-                    <div key={judge.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors">
-                      <div className="flex-1">
+                    <div key={judge.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors gap-3">
+                      <div className="flex-1 min-w-0">
                         <p className="font-semibold text-gray-900">{judge.name}</p>
-                        <p className="text-sm text-gray-600 font-mono">Code: {judge.access_code}</p>
+                        {editingJudgeId === judge.id ? (
+                          <div className="flex items-center gap-2 mt-1">
+                            <input
+                              type="text"
+                              value={editJudgeCode}
+                              onChange={(e) => setEditJudgeCode(e.target.value.toUpperCase())}
+                              className="px-2 py-1 border border-gray-300 rounded text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-purple-500"
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => handleUpdateJudgeCode(judge.id)}
+                              disabled={saving || !editJudgeCode.trim()}
+                              className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white rounded text-xs font-semibold"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingJudgeId(null)
+                                setEditJudgeCode('')
+                              }}
+                              className="px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded text-xs font-semibold"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm text-gray-600 font-mono">Code: {judge.access_code}</p>
+                            <button
+                              onClick={() => {
+                                setEditingJudgeId(judge.id)
+                                setEditJudgeCode(judge.access_code)
+                              }}
+                              className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 shrink-0">
                         <label className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
