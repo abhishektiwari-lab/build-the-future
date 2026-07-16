@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { generateJoinCode, generateAccessCode } from '@/lib/auth'
+import { getTeamLeaderboard, formatScore, type TeamScore } from '@/lib/scoring'
 
 export default function ModeratorDashboard() {
   const router = useRouter()
@@ -45,6 +46,10 @@ export default function ModeratorDashboard() {
 
   // Judging status: judge_ids that have scored the current team
   const [scoredJudgeIds, setScoredJudgeIds] = useState<string[]>([])
+
+  // Leaderboard
+  const [leaderboard, setLeaderboard] = useState<TeamScore[]>([])
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false)
 
   const loadData = useCallback(async () => {
     try {
@@ -136,6 +141,13 @@ export default function ModeratorDashboard() {
     setScoredJudgeIds((data || []).map((s: any) => s.judge_id))
   }, [currentTeam])
 
+  const loadLeaderboard = useCallback(async () => {
+    setLeaderboardLoading(true)
+    const data = await getTeamLeaderboard()
+    setLeaderboard(data)
+    setLeaderboardLoading(false)
+  }, [])
+
   // Poll judge scoring status while the Judging tab is open
   useEffect(() => {
     if (activeTab !== 'judging' || !currentTeam) return
@@ -143,6 +155,14 @@ export default function ModeratorDashboard() {
     const interval = setInterval(loadJudgingStatus, 4000)
     return () => clearInterval(interval)
   }, [activeTab, currentTeam, loadJudgingStatus])
+
+  // Refresh the leaderboard while the Leaderboard tab is open
+  useEffect(() => {
+    if (activeTab !== 'leaderboard') return
+    loadLeaderboard()
+    const interval = setInterval(loadLeaderboard, 5000)
+    return () => clearInterval(interval)
+  }, [activeTab, loadLeaderboard])
 
   const handleLogout = () => {
     localStorage.removeItem('moderatorLoggedIn')
@@ -488,6 +508,119 @@ export default function ModeratorDashboard() {
     } finally {
       setSaving(false)
     }
+  }
+
+  // ---- Leaderboard / reveal controls ----
+
+  const handleSetRevealState = async (state: string) => {
+    if (!eventState) return
+    const { error: err } = await supabase
+      .from('event_state')
+      .update({ winner_reveal_state: state })
+      .eq('id', eventState.id)
+    if (!err) setEventState({ ...eventState, winner_reveal_state: state })
+  }
+
+  // Detect complete ties: same overall AND identical on all three criteria,
+  // among teams that have at least one judge score. These can't be broken
+  // automatically and must be flagged for a moderator decision.
+  const tiedTeamIds = (() => {
+    const scored = leaderboard.filter((t) => t.judgesCompleted > 0)
+    const flagged = new Set<string>()
+    for (let i = 0; i < scored.length; i++) {
+      for (let j = i + 1; j < scored.length; j++) {
+        const a = scored[i]
+        const b = scored[j]
+        if (
+          a.overallScore === b.overallScore &&
+          a.avgCustomerOutcome === b.avgCustomerOutcome &&
+          a.avgAiNativeThinking === b.avgAiNativeThinking &&
+          a.avgInnovationAndVision === b.avgInnovationAndVision
+        ) {
+          flagged.add(a.teamId)
+          flagged.add(b.teamId)
+        }
+      }
+    }
+    return flagged
+  })()
+
+  const downloadCsv = (filename: string, rows: string[][]) => {
+    const escape = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const csv = rows.map((r) => r.map(escape).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleExportLeaderboard = () => {
+    const rows: string[][] = [
+      [
+        'Rank',
+        'Team',
+        'Prototype',
+        'Customer Outcome',
+        'AI-Native Thinking',
+        'Innovation & Vision',
+        'Overall',
+        'Judges Completed',
+      ],
+    ]
+    leaderboard.forEach((t) => {
+      rows.push([
+        String(t.rank),
+        t.teamName,
+        t.prototypeName || '',
+        formatScore(t.avgCustomerOutcome),
+        formatScore(t.avgAiNativeThinking),
+        formatScore(t.avgInnovationAndVision),
+        formatScore(t.overallScore),
+        String(t.judgesCompleted),
+      ])
+    })
+    downloadCsv('build-the-future-leaderboard.csv', rows)
+  }
+
+  const handleExportAllScores = async () => {
+    setError('')
+    // Pull every score with judge + team names for a full audit export
+    const { data, error: err } = await supabase
+      .from('scores')
+      .select('*, judges(name), teams(name)')
+    if (err) {
+      setError(`Export failed — ${err.message}`)
+      return
+    }
+    const rows: string[][] = [
+      [
+        'Team',
+        'Judge',
+        'Customer Outcome',
+        'AI-Native Thinking',
+        'Innovation & Vision',
+        'Overall',
+        'Comment',
+        'Submitted At',
+      ],
+    ]
+    ;(data || []).forEach((s: any) => {
+      const overall = (s.customer_outcome + s.ai_native_thinking + s.innovation_and_vision) / 3
+      rows.push([
+        s.teams?.name || '',
+        s.judges?.name || '',
+        String(s.customer_outcome),
+        String(s.ai_native_thinking),
+        String(s.innovation_and_vision),
+        formatScore(overall),
+        s.comment || '',
+        s.submitted_at || '',
+      ])
+    })
+    downloadCsv('build-the-future-all-scores.csv', rows)
   }
 
   if (loading) {
@@ -1161,9 +1294,155 @@ export default function ModeratorDashboard() {
 
         {/* LEADERBOARD TAB */}
         {activeTab === 'leaderboard' && (
-          <div className="bg-white rounded-lg p-6 shadow-sm">
-            <h2 className="text-lg font-bold text-gray-900 mb-4">Leaderboard</h2>
-            <p className="text-gray-600">Leaderboard view coming soon...</p>
+          <div className="space-y-6">
+            {/* Public results / reveal controls */}
+            <div className="bg-white rounded-lg p-6 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <h2 className="text-lg font-bold text-gray-900">Public Results Screen</h2>
+                <a
+                  href="/results"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  Open projector view ↗
+                </a>
+              </div>
+
+              <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg mb-4">
+                <div>
+                  <p className="font-medium text-gray-700">Leaderboard visible to public</p>
+                  <p className="text-xs text-gray-500">
+                    When off, the /results screen shows a holding message.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={eventState?.leaderboard_visible || false}
+                  onChange={(e) => handleToggleEvent('leaderboard_visible', e.target.checked)}
+                  className="w-5 h-5"
+                />
+              </div>
+
+              <p className="text-sm font-medium text-gray-700 mb-2">Reveal sequence</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {[
+                  { key: 'hidden', label: 'Hold Screen' },
+                  { key: 'top3', label: 'Reveal Top 3' },
+                  { key: 'full', label: 'Full Leaderboard' },
+                  { key: 'winner', label: 'Highlight Winner' },
+                ].map((s) => (
+                  <button
+                    key={s.key}
+                    onClick={() => handleSetRevealState(s.key)}
+                    className={`py-2 px-3 rounded-lg text-sm font-semibold border-2 transition-all ${
+                      eventState?.winner_reveal_state === s.key
+                        ? 'border-green-600 bg-green-50 text-green-700'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Export */}
+            <div className="bg-white rounded-lg p-6 shadow-sm">
+              <h2 className="text-lg font-bold text-gray-900 mb-3">Export</h2>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={handleExportLeaderboard}
+                  disabled={leaderboard.length === 0}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                >
+                  Export Leaderboard CSV
+                </button>
+                <button
+                  onClick={handleExportAllScores}
+                  className="bg-slate-700 hover:bg-slate-800 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+                >
+                  Export All Scores &amp; Comments CSV
+                </button>
+              </div>
+            </div>
+
+            {/* Live leaderboard */}
+            <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h2 className="text-lg font-bold text-gray-900">Live Leaderboard</h2>
+                <button
+                  onClick={loadLeaderboard}
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              {tiedTeamIds.size > 0 && (
+                <div className="m-4 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded text-sm">
+                  ⚠️ Complete tie detected between {tiedTeamIds.size} teams (identical on all criteria).
+                  Tie-breakers cannot separate them — a moderator decision is required.
+                </div>
+              )}
+
+              {leaderboardLoading && leaderboard.length === 0 ? (
+                <p className="p-6 text-gray-500">Loading leaderboard…</p>
+              ) : leaderboard.length === 0 ? (
+                <p className="p-6 text-gray-500 italic">No teams yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-3 text-left font-semibold text-gray-700">Rank</th>
+                        <th className="px-4 py-3 text-left font-semibold text-gray-700">Team</th>
+                        <th className="px-4 py-3 text-left font-semibold text-gray-700">Prototype</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Cust.</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700">AI</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Innov.</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Overall</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-700">Judges</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {leaderboard.map((t) => {
+                        const expected = judges.filter((j) => j.active).length
+                        const incomplete = t.judgesCompleted < expected
+                        return (
+                          <tr
+                            key={t.teamId}
+                            className={`border-b border-gray-200 ${
+                              tiedTeamIds.has(t.teamId) ? 'bg-amber-50' : 'hover:bg-slate-50'
+                            }`}
+                          >
+                            <td className="px-4 py-3 font-bold text-gray-900">#{t.rank}</td>
+                            <td className="px-4 py-3 font-medium text-gray-900">
+                              {t.teamName}
+                              {tiedTeamIds.has(t.teamId) && (
+                                <span className="ml-2 text-xs text-amber-700 font-semibold">TIE</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-gray-600">{t.prototypeName || '—'}</td>
+                            <td className="px-4 py-3 text-center">{formatScore(t.avgCustomerOutcome)}</td>
+                            <td className="px-4 py-3 text-center">{formatScore(t.avgAiNativeThinking)}</td>
+                            <td className="px-4 py-3 text-center">{formatScore(t.avgInnovationAndVision)}</td>
+                            <td className="px-4 py-3 text-center font-bold text-blue-600">
+                              {formatScore(t.overallScore)}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={incomplete ? 'text-amber-600 font-semibold' : 'text-gray-700'}>
+                                {t.judgesCompleted}/{expected}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
