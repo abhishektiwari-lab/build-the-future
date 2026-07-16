@@ -49,7 +49,7 @@ export async function getTeamLeaderboard(): Promise<TeamScore[]> {
     return []
   }
 
-  return data.map((row: any) => ({
+  const mapped: TeamScore[] = data.map((row: any) => ({
     teamId: row.team_id,
     teamName: row.team_name,
     prototypeName: row.prototype_name,
@@ -57,10 +57,31 @@ export async function getTeamLeaderboard(): Promise<TeamScore[]> {
     avgAiNativeThinking: parseFloat(row.avg_ai_native_thinking || 0),
     avgInnovationAndVision: parseFloat(row.avg_innovation_and_vision || 0),
     overallScore: parseFloat(row.overall_score || 0),
-    judgesCompleted: row.judges_completed || 0,
+    judgesCompleted: Number(row.judges_completed) || 0,
     totalJudges: 5, // hardcoded for now, should come from event_state
-    rank: row.rank || 0,
+    rank: 0,
   }))
+
+  // Sort and rank on the client so ordering is deterministic regardless of how
+  // the API returns rows. Teams with no scores sort to the bottom. Applies the
+  // full tie-break sequence: overall -> customer -> AI-native -> innovation.
+  mapped.sort((a, b) => {
+    const aScored = a.judgesCompleted > 0 ? 1 : 0
+    const bScored = b.judgesCompleted > 0 ? 1 : 0
+    if (aScored !== bScored) return bScored - aScored
+    if (b.overallScore !== a.overallScore) return b.overallScore - a.overallScore
+    if (b.avgCustomerOutcome !== a.avgCustomerOutcome)
+      return b.avgCustomerOutcome - a.avgCustomerOutcome
+    if (b.avgAiNativeThinking !== a.avgAiNativeThinking)
+      return b.avgAiNativeThinking - a.avgAiNativeThinking
+    return b.avgInnovationAndVision - a.avgInnovationAndVision
+  })
+
+  mapped.forEach((t, i) => {
+    t.rank = i + 1
+  })
+
+  return mapped
 }
 
 export async function getTeamScores(teamId: string): Promise<any[]> {
